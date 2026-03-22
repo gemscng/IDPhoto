@@ -108,5 +108,31 @@
   "language": {
     "en": "English",
     "zhHK": "繁體中文"
+  },
+  "seo": {
+    "title": "IDPhoto — AI 兒童面試證件照 | 香港",
+    "description": "幾秒鐘即可生成專業 AI 兒童面試證件照。上傳照片，獲取影樓級小學面試相、證件相。低至 HKD 50。香港標準尺寸。",
+    "uploadTitle": "上傳照片 | IDPhoto",
+    "uploadDescription": "上傳您孩子的照片，AI 立即生成專業面試證件照。支援 JPEG 和 PNG，即時出相。"
+  },
+  "errors": {
+    "boundary": "出了點問題",
+    "boundaryMessage": "發生了意外錯誤。請重試。",
+    "retry": "重試",
+    "noFace": "未能偵測到面部。請上傳一張清晰的正面照片。",
+    "imageTooSmall": "圖片太小。請上傳更高解像度的照片（至少 500×500 像素）。",
+    "imageTooLarge": "圖片太大，無法處理。請使用 10MB 以下的照片。",
+    "networkError": "網絡錯誤。請檢查您的連接後重試。",
+    "processingFailed": "照片處理失敗。請嘗試另一張照片。"
+  },
+  "footer": {
+    "privacy": "私隱政策",
+    "terms": "使用條款",
+    "contact": "聯繫我們"
+  },
+  "notFound": {
+    "title": "找不到頁面",
+    "message": "您尋找的頁面不存在或已被移動。",
+    "goHome": "返回首頁"
   }
 }

@@ -43,6 +43,7 @@ const ALL_SIZES = ["35x45", "25x35", "passport"] as const;
 
 export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
   const t = useTranslations("preview");
+  const tErr = useTranslations("errors");
   const [processingState, setProcessingState] =
     useState<ProcessingState>("idle");
   const [selectedBg, setSelectedBg] = useState(BACKGROUND_COLORS[0].value);
@@ -110,14 +111,18 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
       setProcessingState("done");
     } catch (error) {
       console.error("Processing error:", error);
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.",
-      );
+      let message: string;
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        message = tErr("networkError");
+      } else if (error instanceof Error) {
+        message = error.message;
+      } else {
+        message = tErr("processingFailed");
+      }
+      setErrorMessage(message);
       setProcessingState("error");
     }
-  }, [file, selectedBg, selectedSize]);
+  }, [file, selectedBg, selectedSize, tErr]);
 
   const handleDownload = useCallback(
     (size?: string) => {
@@ -158,13 +163,17 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
         if (data.url) {
           window.location.href = data.url;
         }
-      } catch {
-        setErrorMessage("Failed to initiate payment. Please try again.");
+      } catch (error) {
+        if (error instanceof TypeError && error.message.includes("fetch")) {
+          setErrorMessage(tErr("networkError"));
+        } else {
+          setErrorMessage(tErr("processingFailed"));
+        }
       } finally {
         setIsCheckingOut(false);
       }
     },
-    [],
+    [tErr],
   );
 
   if (!file || !previewUrl) return null;

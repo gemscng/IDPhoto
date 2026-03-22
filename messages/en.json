@@ -108,5 +108,31 @@
   "language": {
     "en": "English",
     "zhHK": "繁體中文"
+  },
+  "seo": {
+    "title": "IDPhoto — AI Interview Photos for Kids | Hong Kong",
+    "description": "Professional AI interview photos for children in seconds. Upload a photo, get studio-quality school interview & passport photos. From HKD 50. Hong Kong standard sizes.",
+    "uploadTitle": "Upload Photo | IDPhoto",
+    "uploadDescription": "Upload your child's photo and let AI generate a professional interview photo in seconds. JPEG or PNG, instant results."
+  },
+  "errors": {
+    "boundary": "Something went wrong",
+    "boundaryMessage": "An unexpected error occurred. Please try again.",
+    "retry": "Try Again",
+    "noFace": "No face detected in the photo. Please upload a clear, front-facing photo.",
+    "imageTooSmall": "Image is too small. Please upload a higher resolution photo (at least 500×500 pixels).",
+    "imageTooLarge": "Image is too large to process. Please use a photo under 10MB.",
+    "networkError": "Network error. Please check your connection and try again.",
+    "processingFailed": "Photo processing failed. Please try a different photo."
+  },
+  "footer": {
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "contact": "Contact"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "message": "The page you're looking for doesn't exist or has been moved.",
+    "goHome": "Go Home"
   }
 }

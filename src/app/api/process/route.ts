@@ -166,8 +166,26 @@ export async function POST(req: NextRequest) {
     const imgWidth = metadata.width!;
     const imgHeight = metadata.height!;
 
+    // Validate image dimensions
+    if (imgWidth < 200 || imgHeight < 200) {
+      return NextResponse.json(
+        { error: "Image is too small. Please upload a higher resolution photo (at least 500×500 pixels)." },
+        { status: 400 },
+      );
+    }
+
     // Find the subject bounds (non-transparent area)
     const bounds = await findSubjectBounds(imageBuffer, imgWidth, imgHeight);
+
+    // Check if any subject was found (face detection proxy)
+    const subjectHeight = bounds.bottom - bounds.top;
+    const subjectWidth = bounds.right - bounds.left;
+    if (subjectHeight < 50 || subjectWidth < 50) {
+      return NextResponse.json(
+        { error: "No face detected in the photo. Please upload a clear, front-facing photo." },
+        { status: 400 },
+      );
+    }
 
     // Estimate face position
     const face = estimateFaceRegion(bounds);

@@ -204,12 +204,21 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Camera className="h-4 w-4" />
-            <span>{t("common.appName")}</span>
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Camera className="h-4 w-4" />
+              <span>{t("common.appName")}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <a href="#" className="hover:text-foreground transition-colors">{t("footer.privacy")}</a>
+              <a href="#" className="hover:text-foreground transition-colors">{t("footer.terms")}</a>
+              <a href="mailto:hello@idphoto.app" className="hover:text-foreground transition-colors">{t("footer.contact")}</a>
+            </div>
           </div>
-          <p>{t("common.copyright")}</p>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            {t("common.copyright")}
+          </p>
         </div>
       </footer>
     </div>
