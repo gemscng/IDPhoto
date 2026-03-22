@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { Camera, ArrowLeft } from "lucide-react";
 import { PhotoUpload } from "@/components/photo-upload";
 import { ImagePreview } from "@/components/image-preview";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
+  const t = useTranslations();
 
   const previewUrl = useMemo(() => {
     if (!file) return null;
@@ -33,8 +36,11 @@ export default function UploadPage() {
           >
             <ArrowLeft className="h-4 w-4" />
             <Camera className="h-6 w-6 text-primary" />
-            <span className="font-bold text-lg text-foreground">IDPhoto</span>
+            <span className="font-bold text-lg text-foreground">
+              {t("common.appName")}
+            </span>
           </Link>
+          <LanguageSwitcher />
         </div>
       </header>
 
@@ -43,12 +49,12 @@ export default function UploadPage() {
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-20">
           <div className="text-center mb-10">
             <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
-              {file ? "Preview your photo" : "Upload your photo"}
+              {file ? t("upload.titlePreview") : t("upload.titleUpload")}
             </h1>
             <p className="mt-3 text-muted-foreground text-lg">
               {file
-                ? "Check your photo and click process when ready."
-                : "Upload a clear, front-facing photo of your child for the best results."}
+                ? t("upload.subtitlePreview")
+                : t("upload.subtitleUpload")}
             </p>
           </div>
 
@@ -65,20 +71,12 @@ export default function UploadPage() {
           {/* Tips */}
           {!file && (
             <div className="mt-12 rounded-xl bg-muted/50 border p-6">
-              <h3 className="font-semibold mb-3">Tips for best results</h3>
+              <h3 className="font-semibold mb-3">{t("upload.tipsTitle")}</h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
-                <li>
-                  &bull; Use a clear, front-facing photo with good lighting
-                </li>
-                <li>
-                  &bull; Make sure your child&apos;s face is fully visible (no
-                  hats or sunglasses)
-                </li>
-                <li>&bull; A neutral expression works best for interviews</li>
-                <li>
-                  &bull; The background doesn&apos;t matter — our AI will
-                  replace it
-                </li>
+                <li>&bull; {t("upload.tip1")}</li>
+                <li>&bull; {t("upload.tip2")}</li>
+                <li>&bull; {t("upload.tip3")}</li>
+                <li>&bull; {t("upload.tip4")}</li>
               </ul>
             </div>
           )}
@@ -88,7 +86,7 @@ export default function UploadPage() {
       {/* Footer */}
       <footer className="border-t">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 text-center text-sm text-muted-foreground">
-          <p>Your photos are processed securely and never shared.</p>
+          <p>{t("upload.privacyNote")}</p>
         </div>
       </footer>
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Upload, Camera, X, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -17,24 +18,25 @@ export function PhotoUpload({ onFileSelect, disabled }: PhotoUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const t = useTranslations("upload");
 
   const validateAndSelect = useCallback(
     (file: File) => {
       setError(null);
 
       if (!ACCEPTED_TYPES.includes(file.type)) {
-        setError("Please upload a JPEG or PNG image.");
+        setError(t("errorType"));
         return;
       }
 
       if (file.size > MAX_FILE_SIZE) {
-        setError("File is too large. Maximum size is 10MB.");
+        setError(t("errorSize"));
         return;
       }
 
       onFileSelect(file);
     },
-    [onFileSelect]
+    [onFileSelect, t],
   );
 
   const handleDrop = useCallback(
@@ -45,7 +47,7 @@ export function PhotoUpload({ onFileSelect, disabled }: PhotoUploadProps) {
       const file = e.dataTransfer.files[0];
       if (file) validateAndSelect(file);
     },
-    [validateAndSelect]
+    [validateAndSelect],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -62,10 +64,9 @@ export function PhotoUpload({ onFileSelect, disabled }: PhotoUploadProps) {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) validateAndSelect(file);
-      // Reset input so same file can be selected again
       e.target.value = "";
     },
-    [validateAndSelect]
+    [validateAndSelect],
   );
 
   return (
@@ -101,10 +102,10 @@ export function PhotoUpload({ onFileSelect, disabled }: PhotoUploadProps) {
           </div>
           <div>
             <p className="font-semibold text-lg">
-              {isDragging ? "Drop your photo here" : "Drag & drop your photo"}
+              {isDragging ? t("dropHere") : t("dragDrop")}
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              or click to browse. JPEG or PNG, max 10MB.
+              {t("orBrowse")}
             </p>
           </div>
         </div>
@@ -127,7 +128,7 @@ export function PhotoUpload({ onFileSelect, disabled }: PhotoUploadProps) {
           disabled={disabled}
         >
           <Camera className="mr-2 h-4 w-4" />
-          Take Photo
+          {t("takePhoto")}
         </Button>
       </div>
 

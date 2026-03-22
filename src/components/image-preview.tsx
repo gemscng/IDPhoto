@@ -2,11 +2,24 @@
 
 import { useState, useCallback } from "react";
 import Image from "next/image";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2, RotateCcw, Download, Check } from "lucide-react";
+import { BeforeAfterSlider } from "@/components/before-after-slider";
+import {
+  Loader2,
+  RotateCcw,
+  Download,
+  Check,
+  CreditCard,
+} from "lucide-react";
 
-type ProcessingState = "idle" | "removing_bg" | "processing" | "done" | "error";
+type ProcessingState =
+  | "idle"
+  | "removing_bg"
+  | "processing"
+  | "done"
+  | "error";
 
 interface ImagePreviewProps {
   file: File | null;
@@ -15,24 +28,31 @@ interface ImagePreviewProps {
 }
 
 const BACKGROUND_COLORS = [
-  { label: "White", value: "#FFFFFF" },
-  { label: "Light Blue", value: "#D6EAF8" },
-  { label: "Light Grey", value: "#E8E8E8" },
+  { labelKey: "bgWhite" as const, value: "#FFFFFF" },
+  { labelKey: "bgLightBlue" as const, value: "#D6EAF8" },
+  { labelKey: "bgLightGrey" as const, value: "#E8E8E8" },
 ];
 
 const PHOTO_SIZES = [
-  { label: "35×45mm (HK Standard)", value: "35x45" },
-  { label: "25×35mm", value: "25x35" },
-  { label: "Passport", value: "passport" },
+  { labelKey: "sizeHK" as const, value: "35x45" },
+  { labelKey: "sizeSmall" as const, value: "25x35" },
+  { labelKey: "sizePassport" as const, value: "passport" },
 ];
 
+const ALL_SIZES = ["35x45", "25x35", "passport"] as const;
+
 export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
+  const t = useTranslations("preview");
   const [processingState, setProcessingState] =
     useState<ProcessingState>("idle");
   const [selectedBg, setSelectedBg] = useState(BACKGROUND_COLORS[0].value);
   const [selectedSize, setSelectedSize] = useState(PHOTO_SIZES[0].value);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [allResults, setAllResults] = useState<
+    Record<string, string> | null
+  >(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   const handleProcess = useCallback(async () => {
     if (!file) return;
@@ -41,14 +61,12 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
     setErrorMessage(null);
 
     try {
-      // Step 1: Remove background using @imgly/background-removal (client-side)
       const { removeBackground } = await import("@imgly/background-removal");
 
       const blob = await removeBackground(file, {
         output: { format: "image/png", quality: 1 },
       });
 
-      // Convert blob to base64
       const reader = new FileReader();
       const base64 = await new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve(reader.result as string);
@@ -56,47 +74,98 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
         reader.readAsDataURL(blob);
       });
 
-      // Step 2: Send to server for cropping, enhancement, and background replacement
       setProcessingState("processing");
 
-      const response = await fetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: base64,
-          backgroundColor: selectedBg,
-          size: selectedSize,
-          enhance: true,
-        }),
-      });
+      // Process all sizes in parallel for download-all feature
+      const results = await Promise.all(
+        ALL_SIZES.map(async (size) => {
+          const response = await fetch("/api/process", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image: base64,
+              backgroundColor: selectedBg,
+              size,
+              enhance: true,
+            }),
+          });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Processing failed");
+          if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || "Processing failed");
+          }
+
+          const data = await response.json();
+          return { size, image: data.processedImage };
+        }),
+      );
+
+      const resultMap: Record<string, string> = {};
+      for (const r of results) {
+        resultMap[r.size] = r.image;
       }
 
-      const data = await response.json();
-      setResultUrl(data.processedImage);
+      setAllResults(resultMap);
+      setResultUrl(resultMap[selectedSize]);
       setProcessingState("done");
     } catch (error) {
       console.error("Processing error:", error);
       setErrorMessage(
-        error instanceof Error ? error.message : "An unexpected error occurred.",
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.",
       );
       setProcessingState("error");
     }
   }, [file, selectedBg, selectedSize]);
 
-  const handleDownload = useCallback(() => {
-    if (!resultUrl) return;
+  const handleDownload = useCallback(
+    (size?: string) => {
+      const sizeKey = size || selectedSize;
+      const url = allResults?.[sizeKey] || resultUrl;
+      if (!url) return;
 
-    const link = document.createElement("a");
-    link.href = resultUrl;
-    link.download = `idphoto-${selectedSize}.jpg`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [resultUrl, selectedSize]);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `idphoto-${sizeKey}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    },
+    [allResults, resultUrl, selectedSize],
+  );
+
+  const handleDownloadAll = useCallback(() => {
+    if (!allResults) return;
+    for (const size of ALL_SIZES) {
+      if (allResults[size]) {
+        setTimeout(() => handleDownload(size), ALL_SIZES.indexOf(size) * 300);
+      }
+    }
+  }, [allResults, handleDownload]);
+
+  const handleCheckout = useCallback(
+    async (plan: "single" | "bundle") => {
+      setIsCheckingOut(true);
+      try {
+        const response = await fetch("/api/create-checkout-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan }),
+        });
+
+        const data = await response.json();
+        if (data.url) {
+          window.location.href = data.url;
+        }
+      } catch {
+        setErrorMessage("Failed to initiate payment. Please try again.");
+      } finally {
+        setIsCheckingOut(false);
+      }
+    },
+    [],
+  );
 
   if (!file || !previewUrl) return null;
 
@@ -111,7 +180,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
           {/* Background color */}
           <div>
             <label className="text-sm font-medium mb-2 block">
-              Background Color
+              {t("backgroundColor")}
             </label>
             <div className="flex gap-2">
               {BACKGROUND_COLORS.map((bg) => (
@@ -129,7 +198,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
                     className="w-4 h-4 rounded-full border border-border"
                     style={{ backgroundColor: bg.value }}
                   />
-                  {bg.label}
+                  {t(bg.labelKey)}
                 </button>
               ))}
             </div>
@@ -137,7 +206,9 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
 
           {/* Photo size */}
           <div>
-            <label className="text-sm font-medium mb-2 block">Photo Size</label>
+            <label className="text-sm font-medium mb-2 block">
+              {t("photoSize")}
+            </label>
             <div className="flex flex-wrap gap-2">
               {PHOTO_SIZES.map((sz) => (
                 <button
@@ -150,7 +221,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
                       : "border-border hover:border-primary/50"
                   } ${isProcessing ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                 >
-                  {sz.label}
+                  {t(sz.labelKey)}
                 </button>
               ))}
             </div>
@@ -159,103 +230,112 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
       )}
 
       {/* Image previews */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        {/* Original image */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-sm font-medium text-muted-foreground mb-3">
-              Original
-            </p>
-            <div className="relative aspect-[3/4] w-full rounded-lg overflow-hidden bg-muted">
-              <Image
-                src={previewUrl}
-                alt="Original photo"
-                fill
-                className="object-cover"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              {file.name} &middot;{" "}
-              {(file.size / (1024 * 1024)).toFixed(1)}MB
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Result preview */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-sm font-medium text-muted-foreground mb-3">
-              Result
-            </p>
-            <div className="relative aspect-[3/4] w-full rounded-lg overflow-hidden bg-muted flex items-center justify-center">
-              {processingState === "idle" && (
-                <p className="text-sm text-muted-foreground px-6 text-center">
-                  Select your options and click &ldquo;Process Photo&rdquo; to
-                  generate your interview photo.
-                </p>
-              )}
-              {processingState === "removing_bg" && (
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <p className="text-sm text-muted-foreground">
-                    Removing background...
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    This may take a moment on first use
-                  </p>
-                </div>
-              )}
-              {processingState === "processing" && (
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <p className="text-sm text-muted-foreground">
-                    Enhancing & cropping...
-                  </p>
-                </div>
-              )}
-              {processingState === "done" && resultUrl && (
+      {processingState === "done" && resultUrl && previewUrl ? (
+        /* Before/After slider when done */
+        <BeforeAfterSlider
+          beforeSrc={previewUrl}
+          afterSrc={resultUrl}
+          beforeAlt={t("original")}
+          afterAlt={t("result")}
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          {/* Original image */}
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-sm font-medium text-muted-foreground mb-3">
+                {t("original")}
+              </p>
+              <div className="relative aspect-[3/4] w-full rounded-lg overflow-hidden bg-muted">
                 <Image
-                  src={resultUrl}
-                  alt="Processed photo"
+                  src={previewUrl}
+                  alt={t("original")}
                   fill
-                  className="object-contain"
+                  className="object-cover"
                 />
-              )}
-              {processingState === "error" && (
-                <div className="flex flex-col items-center gap-3 px-6">
-                  <p className="text-sm text-destructive text-center">
-                    {errorMessage || "Something went wrong."}
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {file.name} &middot;{" "}
+                {(file.size / (1024 * 1024)).toFixed(1)}MB
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Result preview */}
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-sm font-medium text-muted-foreground mb-3">
+                {t("result")}
+              </p>
+              <div className="relative aspect-[3/4] w-full rounded-lg overflow-hidden bg-muted flex items-center justify-center">
+                {processingState === "idle" && (
+                  <p className="text-sm text-muted-foreground px-6 text-center">
+                    {t("idleMessage")}
                   </p>
-                  <p className="text-xs text-muted-foreground text-center">
-                    Try again or upload a different photo.
-                  </p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                )}
+                {processingState === "removing_bg" && (
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">
+                      {t("removingBg")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("removingBgNote")}
+                    </p>
+                  </div>
+                )}
+                {processingState === "processing" && (
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">
+                      {t("enhancing")}
+                    </p>
+                  </div>
+                )}
+                {processingState === "error" && (
+                  <div className="flex flex-col items-center gap-3 px-6">
+                    <p className="text-sm text-destructive text-center">
+                      {errorMessage || t("errorDefault")}
+                    </p>
+                    <p className="text-xs text-muted-foreground text-center">
+                      {t("errorRetry")}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex flex-col sm:flex-row gap-3 justify-center">
         {(processingState === "idle" || processingState === "error") && (
           <Button size="lg" onClick={handleProcess}>
-            Process Photo
+            {t("processPhoto")}
           </Button>
         )}
         {isProcessing && (
           <Button size="lg" disabled>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             {processingState === "removing_bg"
-              ? "Removing Background..."
-              : "Processing..."}
+              ? t("removingBackground")
+              : t("processing")}
           </Button>
         )}
         {processingState === "done" && (
           <>
-            <Button size="lg" onClick={handleDownload}>
+            <Button size="lg" onClick={() => handleCheckout("single")} disabled={isCheckingOut}>
+              <CreditCard className="mr-2 h-4 w-4" />
+              {isCheckingOut ? t("processing") : t("payToDownload")}
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={handleDownloadAll}
+            >
               <Download className="mr-2 h-4 w-4" />
-              Download Photo
+              {t("downloadAll")}
             </Button>
             <Button
               variant="outline"
@@ -263,18 +343,26 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
               onClick={() => {
                 setProcessingState("idle");
                 setResultUrl(null);
+                setAllResults(null);
               }}
             >
               <Check className="mr-2 h-4 w-4" />
-              Change Options
+              {t("changeOptions")}
             </Button>
           </>
         )}
         <Button variant="outline" size="lg" onClick={onReset}>
           <RotateCcw className="mr-2 h-4 w-4" />
-          Upload Another
+          {t("uploadAnother")}
         </Button>
       </div>
+
+      {/* Preview-only note */}
+      {processingState === "done" && (
+        <p className="text-xs text-center text-muted-foreground">
+          {t("previewOnly")}
+        </p>
+      )}
     </div>
   );
 }
