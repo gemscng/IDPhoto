@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
+import {
+  hexToRgb,
+  estimateFaceRegion,
+  calculateCrop,
+  SIZES,
+} from "@/lib/image-processing";
+import { rateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const config = {
   api: {
@@ -18,25 +25,6 @@ interface ProcessRequest {
   size: "35x45" | "25x35" | "passport";
   /** Whether to apply auto-enhancement */
   enhance: boolean;
-}
-
-// Standard photo sizes in pixels at 300 DPI
-const SIZES: Record<string, { width: number; height: number; label: string }> = {
-  "35x45": { width: 413, height: 531, label: "35×45mm (HK Standard)" },
-  "25x35": { width: 295, height: 413, label: "25×35mm" },
-  passport: { width: 413, height: 531, label: "Passport (35×45mm)" },
-};
-
-// Head-to-frame ratio targets
-const HEAD_RATIO = { min: 0.65, target: 0.75, max: 0.85 };
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const clean = hex.replace("#", "");
-  return {
-    r: parseInt(clean.substring(0, 2), 16),
-    g: parseInt(clean.substring(2, 4), 16),
-    b: parseInt(clean.substring(4, 6), 16),
-  };
 }
 
 /**
@@ -73,71 +61,31 @@ async function findSubjectBounds(
   return { top, bottom, left, right };
 }
 
-/**
- * Estimate face region from the subject bounds.
- * Assumes the face is in the upper portion of the subject.
- * For a person standing upright, head is roughly the top 25-35% of subject height.
- */
-function estimateFaceRegion(
-  bounds: { top: number; bottom: number; left: number; right: number },
-) {
-  const subjectHeight = bounds.bottom - bounds.top;
-  const subjectWidth = bounds.right - bounds.left;
-
-  // Face is typically in the top 30% of the body, centered horizontally
-  const faceTop = bounds.top;
-  const faceBottom = bounds.top + subjectHeight * 0.35;
-  const faceHeight = faceBottom - faceTop;
-  const faceCenterX = bounds.left + subjectWidth / 2;
-  const faceWidth = faceHeight * 0.75; // Face aspect ratio ~3:4
-
-  return {
-    top: faceTop,
-    bottom: faceBottom,
-    left: Math.max(bounds.left, faceCenterX - faceWidth / 2),
-    right: Math.min(bounds.right, faceCenterX + faceWidth / 2),
-    centerX: faceCenterX,
-    centerY: (faceTop + faceBottom) / 2,
-    height: faceHeight,
-    width: faceWidth,
-  };
-}
-
-/**
- * Calculate the crop region for the ID photo.
- * Centers the face and ensures proper head-to-frame ratio.
- */
-function calculateCrop(
-  imageWidth: number,
-  imageHeight: number,
-  face: ReturnType<typeof estimateFaceRegion>,
-  targetAspect: number,
-): { left: number; top: number; width: number; height: number } {
-  // Target: face height should be HEAD_RATIO.target of the output height
-  const cropHeight = Math.min(
-    face.height / HEAD_RATIO.target,
-    imageHeight,
-  );
-  const cropWidth = Math.min(cropHeight * targetAspect, imageWidth);
-
-  // Center horizontally on face
-  let left = Math.round(face.centerX - cropWidth / 2);
-  // Position face in upper third of frame
-  let top = Math.round(face.top - cropHeight * 0.15);
-
-  // Clamp to image bounds
-  left = Math.max(0, Math.min(left, imageWidth - cropWidth));
-  top = Math.max(0, Math.min(top, imageHeight - cropHeight));
-
-  return {
-    left: Math.round(left),
-    top: Math.round(top),
-    width: Math.round(cropWidth),
-    height: Math.round(cropHeight),
-  };
-}
-
 export async function POST(req: NextRequest) {
+  // Rate limit: 20 requests per minute per IP
+  const ip = getClientIp(req.headers);
+  const rl = rateLimit(`process:${ip}`, { limit: 20, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
+  // Validate Content-Length before parsing (reject >10MB bodies early)
+  const contentLength = req.headers.get("content-length");
+  if (contentLength && parseInt(contentLength) > 10 * 1024 * 1024) {
+    return NextResponse.json(
+      { error: "Request body too large. Maximum size is 10MB." },
+      { status: 413 },
+    );
+  }
+
   try {
     const body: ProcessRequest = await req.json();
     const { image, backgroundColor, size, enhance } = body;

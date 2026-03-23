@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { rateLimit, getClientIp } from "@/lib/rate-limit";
 
 function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -25,6 +26,21 @@ const PLANS = {
 };
 
 export async function POST(req: NextRequest) {
+  // Rate limit: 10 checkout requests per minute per IP
+  const ip = getClientIp(req.headers);
+  const rl = rateLimit(`checkout:${ip}`, { limit: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)),
+        },
+      },
+    );
+  }
+
   try {
     const { plan } = await req.json();
 
