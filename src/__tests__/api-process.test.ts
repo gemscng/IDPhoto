@@ -72,12 +72,16 @@ describe("POST /api/process", () => {
 
   it("returns 400 for too-small images", async () => {
     const { default: sharp } = await import("sharp");
-    (sharp as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+    const smallMock = {
       metadata: vi.fn().mockResolvedValue({ width: 50, height: 50 }),
       ensureAlpha: vi.fn().mockReturnThis(),
       raw: vi.fn().mockReturnThis(),
       toBuffer: vi.fn().mockResolvedValue(Buffer.alloc(50 * 50 * 4)),
-    });
+    };
+    // First call: initial metadata check; second call: post-resize metadata check
+    (sharp as unknown as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(smallMock)
+      .mockReturnValueOnce(smallMock);
 
     const req = makeRequest({
       image: TINY_IMAGE_BASE64,

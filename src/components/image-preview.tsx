@@ -14,6 +14,52 @@ import {
   CreditCard,
 } from "lucide-react";
 
+/**
+ * Resize an image file on the client if either dimension exceeds maxDimension.
+ * Returns the original file if already small enough.
+ */
+async function resizeIfNeeded(file: File, maxDimension: number): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const { naturalWidth: w, naturalHeight: h } = img;
+      URL.revokeObjectURL(img.src);
+
+      if (w <= maxDimension && h <= maxDimension) {
+        resolve(file);
+        return;
+      }
+
+      const scale = maxDimension / Math.max(w, h);
+      const newW = Math.round(w * scale);
+      const newH = Math.round(h * scale);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = newW;
+      canvas.height = newH;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, newW, newH);
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error("Canvas resize failed"));
+            return;
+          }
+          resolve(new File([blob], file.name, { type: file.type || "image/jpeg" }));
+        },
+        file.type || "image/jpeg",
+        0.92,
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src);
+      reject(new Error("Failed to load image for resize"));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 type ProcessingState =
   | "idle"
   | "removing_bg"
@@ -62,9 +108,12 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
     setErrorMessage(null);
 
     try {
+      // Resize large images before processing to avoid memory/payload issues
+      const processFile = await resizeIfNeeded(file, 2048);
+
       const { removeBackground } = await import("@imgly/background-removal");
 
-      const blob = await removeBackground(file, {
+      const blob = await removeBackground(processFile, {
         output: { format: "image/png", quality: 1 },
       });
 

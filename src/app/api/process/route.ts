@@ -107,9 +107,24 @@ export async function POST(req: NextRequest) {
 
     // Decode the base64 image
     const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-    const imageBuffer = Buffer.from(base64Data, "base64");
+    const rawBuffer = Buffer.from(base64Data, "base64");
 
-    // Get image metadata
+    // Get image metadata and downscale oversized images to avoid memory issues
+    const initialMeta = await sharp(rawBuffer).metadata();
+    const MAX_DIM = 2048;
+    let imageBuffer: Buffer;
+    if (
+      (initialMeta.width! > MAX_DIM || initialMeta.height! > MAX_DIM)
+    ) {
+      imageBuffer = await sharp(rawBuffer)
+        .resize(MAX_DIM, MAX_DIM, { fit: "inside", withoutEnlargement: true })
+        .ensureAlpha()
+        .png()
+        .toBuffer() as Buffer;
+    } else {
+      imageBuffer = rawBuffer;
+    }
+
     const metadata = await sharp(imageBuffer).metadata();
     const imgWidth = metadata.width!;
     const imgHeight = metadata.height!;
