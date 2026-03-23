@@ -6,6 +6,7 @@ vi.mock("sharp", () => {
     metadata: vi.fn().mockResolvedValue({ width: 800, height: 1000 }),
     ensureAlpha: vi.fn().mockReturnThis(),
     raw: vi.fn().mockReturnThis(),
+    png: vi.fn().mockReturnThis(),
     toBuffer: vi.fn().mockResolvedValue(Buffer.alloc(800 * 1000 * 4, 255)),
     extract: vi.fn().mockReturnThis(),
     resize: vi.fn().mockReturnThis(),
@@ -16,6 +17,33 @@ vi.mock("sharp", () => {
     jpeg: vi.fn().mockReturnThis(),
   }));
   return { default: mockSharp };
+});
+
+// Mock fal.ai client
+vi.mock("@fal-ai/client", () => {
+  const mockFal = {
+    config: vi.fn(),
+    subscribe: vi.fn().mockResolvedValue({
+      data: {
+        images: [{ url: "https://fal.ai/mock-output.png" }],
+      },
+    }),
+  };
+  return { fal: mockFal };
+});
+
+// Mock fetch for downloading the fal.ai output image
+const originalFetch = globalThis.fetch;
+beforeEach(() => {
+  globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+    if (typeof url === "string" && url.includes("fal.ai")) {
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(Buffer.alloc(800 * 1000 * 3, 200)),
+      });
+    }
+    return originalFetch(url);
+  });
 });
 
 import { POST } from "@/app/api/process/route";
@@ -36,6 +64,7 @@ const TINY_IMAGE_BASE64 =
 describe("POST /api/process", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.FAL_KEY = "test-fal-key";
   });
 
   it("returns 400 when image is missing", async () => {
@@ -70,19 +99,8 @@ describe("POST /api/process", () => {
     expect(data.error).toContain("Invalid size");
   });
 
-  it("returns 400 for too-small images", async () => {
-    const { default: sharp } = await import("sharp");
-    const smallMock = {
-      metadata: vi.fn().mockResolvedValue({ width: 50, height: 50 }),
-      ensureAlpha: vi.fn().mockReturnThis(),
-      raw: vi.fn().mockReturnThis(),
-      toBuffer: vi.fn().mockResolvedValue(Buffer.alloc(50 * 50 * 4)),
-    };
-    // First call: initial metadata check; second call: post-resize metadata check
-    (sharp as unknown as ReturnType<typeof vi.fn>)
-      .mockReturnValueOnce(smallMock)
-      .mockReturnValueOnce(smallMock);
-
+  it("returns 503 when FAL_KEY is not set", async () => {
+    delete process.env.FAL_KEY;
     const req = makeRequest({
       image: TINY_IMAGE_BASE64,
       backgroundColor: "#FFFFFF",
@@ -90,9 +108,9 @@ describe("POST /api/process", () => {
       enhance: false,
     });
     const res = await POST(req);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(503);
     const data = await res.json();
-    expect(data.error).toContain("too small");
+    expect(data.error).toContain("FAL_KEY");
   });
 
   it("returns 200 with processed image for valid input", async () => {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
+import { fal } from "@fal-ai/client";
 import {
   hexToRgb,
   estimateFaceRegion,
@@ -17,7 +18,7 @@ export const config = {
 };
 
 interface ProcessRequest {
-  /** Base64-encoded image with background already removed (RGBA PNG) */
+  /** Base64-encoded image (original photo, background not yet removed) */
   image: string;
   /** Background color hex (e.g. "#FFFFFF") */
   backgroundColor: string;
@@ -59,6 +60,55 @@ async function findSubjectBounds(
   }
 
   return { top, bottom, left, right };
+}
+
+/**
+ * Process the image using fal.ai Nano Banana Pro for background removal
+ * and professional ID photo generation.
+ */
+async function processWithNanoBanana(
+  imageBase64: string,
+  backgroundColor: string,
+): Promise<Buffer> {
+  fal.config({ credentials: process.env.FAL_KEY });
+
+  const colorName = getColorName(backgroundColor);
+  const prompt = `Remove the background from this photo and replace it with a solid ${colorName} background (exact hex: ${backgroundColor}). This is for an official ID/passport photo. Keep the person exactly as they are — do not change their face, expression, clothing, or appearance in any way. The background must be a perfectly uniform solid ${colorName} color with no gradients, shadows, or variations. Maintain professional photo quality with good lighting on the subject.`;
+
+  const result = await fal.subscribe("fal-ai/nano-banana-pro/edit", {
+    input: {
+      prompt,
+      image_urls: [imageBase64],
+      num_images: 1,
+      output_format: "png",
+      resolution: "1K",
+    },
+  });
+
+  const output = result.data as {
+    images: Array<{ url: string }>;
+  };
+
+  if (!output.images || output.images.length === 0) {
+    throw new Error("No image returned from Nano Banana Pro");
+  }
+
+  const imageUrl = output.images[0].url;
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new Error("Failed to download processed image from fal.ai");
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function getColorName(hex: string): string {
+  const map: Record<string, string> = {
+    "#FFFFFF": "white",
+    "#D6EAF8": "light blue",
+    "#E8E8E8": "light grey",
+  };
+  return map[hex.toUpperCase()] || hex;
 }
 
 export async function POST(req: NextRequest) {
@@ -105,27 +155,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Decode the base64 image
-    const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-    const rawBuffer = Buffer.from(base64Data, "base64");
-
-    // Get image metadata and downscale oversized images to avoid memory issues
-    const initialMeta = await sharp(rawBuffer).metadata();
-    const MAX_DIM = 2048;
-    let imageBuffer: Buffer;
-    if (
-      (initialMeta.width! > MAX_DIM || initialMeta.height! > MAX_DIM)
-    ) {
-      imageBuffer = await sharp(rawBuffer)
-        .resize(MAX_DIM, MAX_DIM, { fit: "inside", withoutEnlargement: true })
-        .ensureAlpha()
-        .png()
-        .toBuffer() as Buffer;
-    } else {
-      imageBuffer = rawBuffer;
+    if (!process.env.FAL_KEY) {
+      return NextResponse.json(
+        { error: "AI processing is not configured. Please set FAL_KEY." },
+        { status: 503 },
+      );
     }
 
-    const metadata = await sharp(imageBuffer).metadata();
+    // Ensure we have a proper data URI for fal.ai
+    const imageDataUri = image.startsWith("data:")
+      ? image
+      : `data:image/jpeg;base64,${image}`;
+
+    // Send to Nano Banana Pro for AI-powered background removal + replacement
+    const aiProcessedBuffer = await processWithNanoBanana(
+      imageDataUri,
+      backgroundColor,
+    );
+
+    // Get metadata of the AI-processed image
+    const metadata = await sharp(aiProcessedBuffer).metadata();
     const imgWidth = metadata.width!;
     const imgHeight = metadata.height!;
 
@@ -137,10 +186,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Find the subject bounds (non-transparent area)
-    const bounds = await findSubjectBounds(imageBuffer, imgWidth, imgHeight);
+    // Find subject bounds in the AI-processed image for precise cropping
+    const boundsBuffer = await sharp(aiProcessedBuffer).ensureAlpha().png().toBuffer();
+    const bounds = await findSubjectBounds(boundsBuffer as Buffer, imgWidth, imgHeight);
 
-    // Check if any subject was found (face detection proxy)
+    // Check if any subject was found
     const subjectHeight = bounds.bottom - bounds.top;
     const subjectWidth = bounds.right - bounds.left;
     if (subjectHeight < 50 || subjectWidth < 50) {
@@ -160,8 +210,8 @@ export async function POST(req: NextRequest) {
     // Create the background color
     const bgColor = hexToRgb(backgroundColor);
 
-    // Build the processing pipeline
-    let pipeline = sharp(imageBuffer).ensureAlpha();
+    // Build the processing pipeline with Sharp for precise cropping
+    let pipeline = sharp(aiProcessedBuffer);
 
     // Crop to the calculated region
     pipeline = pipeline.extract({
@@ -177,7 +227,7 @@ export async function POST(req: NextRequest) {
       position: "centre",
     });
 
-    // Apply basic enhancement
+    // Apply basic enhancement if requested
     if (enhance) {
       pipeline = pipeline
         .modulate({
@@ -188,7 +238,7 @@ export async function POST(req: NextRequest) {
         .gamma(1.1);
     }
 
-    // Flatten onto background color (composites the RGBA image onto the solid color)
+    // Flatten onto background color (ensures solid background)
     pipeline = pipeline.flatten({
       background: bgColor,
     });
@@ -208,8 +258,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("Processing error:", error);
+    const message =
+      error instanceof Error ? error.message : "Failed to process image";
     return NextResponse.json(
-      { error: "Failed to process image. Please try again." },
+      { error: `Processing failed: ${message}. Please try again.` },
       { status: 500 },
     );
   }

@@ -62,7 +62,6 @@ async function resizeIfNeeded(file: File, maxDimension: number): Promise<File> {
 
 type ProcessingState =
   | "idle"
-  | "removing_bg"
   | "processing"
   | "done"
   | "error";
@@ -104,29 +103,23 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
   const handleProcess = useCallback(async () => {
     if (!file) return;
 
-    setProcessingState("removing_bg");
+    setProcessingState("processing");
     setErrorMessage(null);
 
     try {
-      // Resize large images before processing to avoid memory/payload issues
+      // Resize large images before sending to server
       const processFile = await resizeIfNeeded(file, 2048);
 
-      const { removeBackground } = await import("@imgly/background-removal");
-
-      const blob = await removeBackground(processFile, {
-        output: { format: "image/png", quality: 1 },
-      });
-
+      // Convert to base64 for the API
       const reader = new FileReader();
       const base64 = await new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve(reader.result as string);
         reader.onerror = reject;
-        reader.readAsDataURL(blob);
+        reader.readAsDataURL(processFile);
       });
 
-      setProcessingState("processing");
-
-      // Process all sizes in parallel for download-all feature
+      // Process all sizes in parallel — server handles background removal
+      // via Nano Banana Pro AI and cropping via Sharp
       const results = await Promise.all(
         ALL_SIZES.map(async (size) => {
           const response = await fetch("/api/process", {
@@ -227,8 +220,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
 
   if (!file || !previewUrl) return null;
 
-  const isProcessing =
-    processingState === "removing_bg" || processingState === "processing";
+  const isProcessing = processingState === "processing";
 
   return (
     <div className="w-full space-y-6">
@@ -331,17 +323,6 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
                     {t("idleMessage")}
                   </p>
                 )}
-                {processingState === "removing_bg" && (
-                  <div className="flex flex-col items-center gap-3">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    <p className="text-sm text-muted-foreground">
-                      {t("removingBg")}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {t("removingBgNote")}
-                    </p>
-                  </div>
-                )}
                 {processingState === "processing" && (
                   <div className="flex flex-col items-center gap-3">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -376,9 +357,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
         {isProcessing && (
           <Button size="lg" disabled>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            {processingState === "removing_bg"
-              ? t("removingBackground")
-              : t("processing")}
+            {t("processing")}
           </Button>
         )}
         {processingState === "done" && (
