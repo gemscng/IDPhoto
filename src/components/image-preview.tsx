@@ -119,7 +119,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
       });
 
       // Process all sizes in parallel — server handles background removal
-      // via Nano Banana Pro AI and cropping via Sharp
+      // via Gemini AI and cropping via Sharp
       const results = await Promise.all(
         ALL_SIZES.map(async (size) => {
           const response = await fetch("/api/process", {

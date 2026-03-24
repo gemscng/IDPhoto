@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import { fal } from "@fal-ai/client";
 import {
   hexToRgb,
   estimateFaceRegion,
@@ -63,43 +62,77 @@ async function findSubjectBounds(
 }
 
 /**
- * Process the image using fal.ai Nano Banana Pro for background removal
+ * Process the image using Gemini API for background removal
  * and professional ID photo generation.
  */
-async function processWithNanoBanana(
+async function processWithGemini(
   imageBase64: string,
   backgroundColor: string,
 ): Promise<Buffer> {
-  fal.config({ credentials: process.env.FAL_KEY });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  // Strip data URI prefix to get raw base64
+  const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  const mimeType = imageBase64.startsWith("data:image/png") ? "image/png" : "image/jpeg";
 
   const colorName = getColorName(backgroundColor);
   const prompt = `Remove the background from this photo and replace it with a solid ${colorName} background (exact hex: ${backgroundColor}). This is for an official ID/passport photo. Keep the person exactly as they are — do not change their face, expression, clothing, or appearance in any way. The background must be a perfectly uniform solid ${colorName} color with no gradients, shadows, or variations. Maintain professional photo quality with good lighting on the subject.`;
 
-  const result = await fal.subscribe("fal-ai/nano-banana-pro/edit", {
-    input: {
-      prompt,
-      image_urls: [imageBase64],
-      num_images: 1,
-      output_format: "png",
-      resolution: "1K",
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Data,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ["IMAGE", "TEXT"],
+          responseMimeType: "image/png",
+        },
+      }),
     },
-  });
+  );
 
-  const output = result.data as {
-    images: Array<{ url: string }>;
-  };
-
-  if (!output.images || output.images.length === 0) {
-    throw new Error("No image returned from Nano Banana Pro");
-  }
-
-  const imageUrl = output.images[0].url;
-  const response = await fetch(imageUrl);
   if (!response.ok) {
-    throw new Error("Failed to download processed image from fal.ai");
+    const errorBody = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  const result = await response.json();
+  const candidates = result.candidates;
+  if (!candidates || candidates.length === 0) {
+    throw new Error("No response from Gemini API");
+  }
+
+  // Find the image part in the response
+  const parts = candidates[0].content?.parts;
+  if (!parts) {
+    throw new Error("No content parts in Gemini response");
+  }
+
+  const imagePart = parts.find(
+    (p: { inlineData?: { mimeType: string; data: string } }) => p.inlineData?.mimeType?.startsWith("image/"),
+  );
+  if (!imagePart?.inlineData?.data) {
+    throw new Error("No image returned from Gemini API");
+  }
+
+  return Buffer.from(imagePart.inlineData.data, "base64");
 }
 
 function getColorName(hex: string): string {
@@ -155,20 +188,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!process.env.FAL_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json(
-        { error: "AI processing is not configured. Please set FAL_KEY." },
+        { error: "AI processing is not configured. Please set GEMINI_API_KEY." },
         { status: 503 },
       );
     }
 
-    // Ensure we have a proper data URI for fal.ai
+    // Ensure we have a proper data URI for Gemini
     const imageDataUri = image.startsWith("data:")
       ? image
       : `data:image/jpeg;base64,${image}`;
 
-    // Send to Nano Banana Pro for AI-powered background removal + replacement
-    const aiProcessedBuffer = await processWithNanoBanana(
+    // Send to Gemini for AI-powered background removal + replacement
+    const aiProcessedBuffer = await processWithGemini(
       imageDataUri,
       backgroundColor,
     );

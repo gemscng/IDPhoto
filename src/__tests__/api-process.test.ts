@@ -19,27 +19,33 @@ vi.mock("sharp", () => {
   return { default: mockSharp };
 });
 
-// Mock fal.ai client
-vi.mock("@fal-ai/client", () => {
-  const mockFal = {
-    config: vi.fn(),
-    subscribe: vi.fn().mockResolvedValue({
-      data: {
-        images: [{ url: "https://fal.ai/mock-output.png" }],
-      },
-    }),
-  };
-  return { fal: mockFal };
-});
-
-// Mock fetch for downloading the fal.ai output image
+// Mock fetch for Gemini API responses
 const originalFetch = globalThis.fetch;
 beforeEach(() => {
+  // Create a small valid PNG as base64 for the mock response
+  const mockImageBase64 = Buffer.alloc(100, 200).toString("base64");
+
   globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-    if (typeof url === "string" && url.includes("fal.ai")) {
+    if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
       return Promise.resolve({
         ok: true,
-        arrayBuffer: () => Promise.resolve(Buffer.alloc(800 * 1000 * 3, 200)),
+        json: () =>
+          Promise.resolve({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: "image/png",
+                        data: mockImageBase64,
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
       });
     }
     return originalFetch(url);
@@ -64,7 +70,7 @@ const TINY_IMAGE_BASE64 =
 describe("POST /api/process", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.FAL_KEY = "test-fal-key";
+    process.env.GEMINI_API_KEY = "test-gemini-key";
   });
 
   it("returns 400 when image is missing", async () => {
@@ -99,8 +105,8 @@ describe("POST /api/process", () => {
     expect(data.error).toContain("Invalid size");
   });
 
-  it("returns 503 when FAL_KEY is not set", async () => {
-    delete process.env.FAL_KEY;
+  it("returns 503 when GEMINI_API_KEY is not set", async () => {
+    delete process.env.GEMINI_API_KEY;
     const req = makeRequest({
       image: TINY_IMAGE_BASE64,
       backgroundColor: "#FFFFFF",
@@ -110,7 +116,7 @@ describe("POST /api/process", () => {
     const res = await POST(req);
     expect(res.status).toBe(503);
     const data = await res.json();
-    expect(data.error).toContain("FAL_KEY");
+    expect(data.error).toContain("GEMINI_API_KEY");
   });
 
   it("returns 200 with processed image for valid input", async () => {
