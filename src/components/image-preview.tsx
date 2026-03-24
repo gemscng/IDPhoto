@@ -193,12 +193,28 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
 
   const handleCheckout = useCallback(
     async (plan: "single" | "bundle") => {
+      if (!allResults) return;
       setIsCheckingOut(true);
       try {
+        // Step 1: Store processed images in persistent storage
+        const storeResponse = await fetch("/api/store-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: allResults }),
+        });
+
+        if (!storeResponse.ok) {
+          const storeData = await storeResponse.json();
+          throw new Error(storeData.error || "Failed to store images");
+        }
+
+        const { sessionKey } = await storeResponse.json();
+
+        // Step 2: Create Stripe checkout session linked to stored images
         const response = await fetch("/api/create-checkout-session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan }),
+          body: JSON.stringify({ plan, sessionKey }),
         });
 
         const data = await response.json();
@@ -208,6 +224,8 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
       } catch (error) {
         if (error instanceof TypeError && error.message.includes("fetch")) {
           setErrorMessage(tErr("networkError"));
+        } else if (error instanceof Error) {
+          setErrorMessage(error.message);
         } else {
           setErrorMessage(tErr("processingFailed"));
         }
@@ -215,7 +233,7 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
         setIsCheckingOut(false);
       }
     },
-    [tErr],
+    [allResults, tErr],
   );
 
   if (!file || !previewUrl) return null;

@@ -36,7 +36,7 @@ describe("POST /api/create-checkout-session", () => {
   });
 
   it("returns 400 when plan is missing", async () => {
-    const req = makeRequest({});
+    const req = makeRequest({ sessionKey: "test-key" });
     const res = await POST(req);
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -44,13 +44,21 @@ describe("POST /api/create-checkout-session", () => {
   });
 
   it("returns 400 for invalid plan", async () => {
-    const req = makeRequest({ plan: "enterprise" });
+    const req = makeRequest({ plan: "enterprise", sessionKey: "test-key" });
     const res = await POST(req);
     expect(res.status).toBe(400);
   });
 
-  it("returns checkout URL for single plan", async () => {
+  it("returns 400 when sessionKey is missing", async () => {
     const req = makeRequest({ plan: "single" });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("sessionKey");
+  });
+
+  it("returns checkout URL for single plan", async () => {
+    const req = makeRequest({ plan: "single", sessionKey: "test-session-key" });
     const res = await POST(req);
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -58,7 +66,7 @@ describe("POST /api/create-checkout-session", () => {
   });
 
   it("returns checkout URL for bundle plan", async () => {
-    const req = makeRequest({ plan: "bundle" });
+    const req = makeRequest({ plan: "bundle", sessionKey: "test-session-key" });
     const res = await POST(req);
     expect(res.status).toBe(200);
     const data = await res.json();

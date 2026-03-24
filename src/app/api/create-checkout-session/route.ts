@@ -42,11 +42,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { plan } = await req.json();
+    const { plan, sessionKey } = await req.json();
 
     if (!plan || !(plan in PLANS)) {
       return NextResponse.json(
         { error: "Invalid plan. Use 'single' or 'bundle'." },
+        { status: 400 },
+      );
+    }
+
+    if (!sessionKey || typeof sessionKey !== "string") {
+      return NextResponse.json(
+        { error: "Missing sessionKey. Store images before checkout." },
         { status: 400 },
       );
     }
@@ -72,6 +79,9 @@ export async function POST(req: NextRequest) {
           quantity: 1,
         },
       ],
+      metadata: {
+        sessionKey,
+      },
       success_url: `${origin}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/payment/cancelled`,
     });
