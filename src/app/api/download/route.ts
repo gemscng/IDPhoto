@@ -17,7 +17,7 @@ function getStripe() {
  */
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req.headers);
-  const rl = rateLimit(`download:${ip}`, { limit: 30, windowMs: 60_000 });
+  const rl = await rateLimit(`download:${ip}`, { limit: 30, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many requests. Please try again later." },

@@ -114,7 +114,7 @@ function getColorName(hex: string): string {
 export async function POST(req: NextRequest) {
   // Rate limit: 20 requests per minute per IP
   const ip = getClientIp(req.headers);
-  const rl = rateLimit(`process:${ip}`, { limit: 20, windowMs: 60_000 });
+  const rl = await rateLimit(`process:${ip}`, { limit: 20, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many requests. Please try again later." },

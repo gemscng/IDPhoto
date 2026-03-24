@@ -14,7 +14,7 @@ interface StoreRequest {
  */
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req.headers);
-  const rl = rateLimit(`store:${ip}`, { limit: 10, windowMs: 60_000 });
+  const rl = await rateLimit(`store:${ip}`, { limit: 10, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many requests. Please try again later." },
