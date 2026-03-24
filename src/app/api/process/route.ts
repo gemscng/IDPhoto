@@ -21,44 +21,10 @@ interface ProcessRequest {
   image: string;
   /** Background color hex (e.g. "#FFFFFF") */
   backgroundColor: string;
-  /** Output size preset */
-  size: "35x45" | "25x35" | "passport";
+  /** Output size preset (single) or array of presets (batch) */
+  size: string | string[];
   /** Whether to apply auto-enhancement */
   enhance: boolean;
-}
-
-/**
- * Find the bounding box of non-transparent pixels (the subject).
- * Uses sharp to extract raw pixel data and scan for alpha > 0.
- */
-async function findSubjectBounds(
-  buffer: Buffer,
-  width: number,
-  height: number,
-): Promise<{ top: number; bottom: number; left: number; right: number }> {
-  const raw = await sharp(buffer)
-    .ensureAlpha()
-    .raw()
-    .toBuffer();
-
-  let top = height,
-    bottom = 0,
-    left = width,
-    right = 0;
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const alpha = raw[(y * width + x) * 4 + 3];
-      if (alpha > 10) {
-        if (y < top) top = y;
-        if (y > bottom) bottom = y;
-        if (x < left) left = x;
-        if (x > right) right = x;
-      }
-    }
-  }
-
-  return { top, bottom, left, right };
 }
 
 /**
@@ -79,10 +45,33 @@ async function processWithGemini(
   const mimeType = imageBase64.startsWith("data:image/png") ? "image/png" : "image/jpeg";
 
   const colorName = getColorName(backgroundColor);
-  const prompt = `Remove the background from this photo and replace it with a solid ${colorName} background (exact hex: ${backgroundColor}). This is for an official ID/passport photo. Keep the person exactly as they are — do not change their face, expression, clothing, or appearance in any way. The background must be a perfectly uniform solid ${colorName} color with no gradients, shadows, or variations. Maintain professional photo quality with good lighting on the subject.`;
+  const prompt = `Edit this photo: remove the background and replace it with a solid ${colorName} (${backgroundColor}) color. This is a PHOTO EDIT, not a regeneration.
+
+CRITICAL — DO NOT CHANGE THE PERSON:
+- This is the #1 rule. The face, body, hair, and clothing must be PIXEL-LEVEL FAITHFUL to the input.
+- Do NOT regenerate, redraw, smooth, reshape, or beautify any part of the person. Copy the person exactly as they are.
+- Every facial feature — wrinkles, moles, blemishes, scars, asymmetries, skin texture — must remain identical.
+- Hair style, hair color, clothing, accessories, and jewelry must be unchanged.
+- Skin tone and complexion must match the original exactly. No whitening, tanning, or color shifts.
+- If you are unsure about a detail, keep the original pixel data.
+
+BACKGROUND ONLY:
+- Replace ONLY the background with a perfectly uniform flat solid ${colorName} color (hex: ${backgroundColor}).
+- No gradients, no shadows, no vignetting, no color variation in the background.
+- Clean edges around hair and shoulders — no halos, fringing, or rough cutouts.
+- Remove all background objects and environmental elements.
+
+MINIMAL LIGHTING ADJUSTMENT:
+- You may SLIGHTLY even out harsh shadows on the face, but do not alter skin color or texture.
+- Do not over-brighten or over-smooth. Subtle adjustments only.
+- Preserve the natural look of the original photo.
+
+FRAMING:
+- Keep the full head (including top of hair) and shoulders. Do not crop.
+- Output at the same resolution as input.`;
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -102,7 +91,7 @@ async function processWithGemini(
         ],
         generationConfig: {
           responseModalities: ["IMAGE", "TEXT"],
-          responseMimeType: "image/png",
+          temperature: 0.2,
         },
       }),
     },
@@ -144,10 +133,68 @@ function getColorName(hex: string): string {
   return map[hex.toUpperCase()] || hex;
 }
 
+/**
+ * Crop and resize the AI-processed image to a specific ID photo size.
+ */
+async function cropToSize(
+  aiProcessedBuffer: Buffer,
+  imgWidth: number,
+  imgHeight: number,
+  face: ReturnType<typeof estimateFaceRegion>,
+  sizeKey: string,
+  backgroundColor: string,
+  enhance: boolean,
+): Promise<{ size: string; image: string; metadata: Record<string, string> }> {
+  const sizeConfig = SIZES[sizeKey];
+  const targetAspect = sizeConfig.width / sizeConfig.height;
+  const crop = calculateCrop(imgWidth, imgHeight, face, targetAspect);
+  const bgColor = hexToRgb(backgroundColor);
+
+  let pipeline = sharp(aiProcessedBuffer);
+
+  pipeline = pipeline.extract({
+    left: crop.left,
+    top: crop.top,
+    width: crop.width,
+    height: crop.height,
+  });
+
+  pipeline = pipeline.resize(sizeConfig.width, sizeConfig.height, {
+    fit: "cover",
+    position: "centre",
+  });
+
+  if (enhance) {
+    pipeline = pipeline
+      .modulate({
+        brightness: 1.08,
+        saturation: 1.10,
+      })
+      .sharpen({ sigma: 1.0, m1: 1.5, m2: 0.7 })
+      .gamma(1.05)
+      .normalise({ lower: 1, upper: 99 });
+  }
+
+  pipeline = pipeline.flatten({ background: bgColor });
+
+  const outputBuffer = await pipeline.jpeg({ quality: 98, chromaSubsampling: "4:4:4" }).toBuffer();
+  const outputBase64 = `data:image/jpeg;base64,${outputBuffer.toString("base64")}`;
+
+  return {
+    size: sizeKey,
+    image: outputBase64,
+    metadata: {
+      size: sizeConfig.label,
+      dimensions: `${sizeConfig.width}×${sizeConfig.height}px`,
+      backgroundColor,
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
-  // Rate limit: 20 requests per minute per IP
+  // Rate limit: 10 requests per minute per IP (reduced since batch does more per call)
   const ip = getClientIp(req.headers);
-  const rl = await rateLimit(`process:${ip}`, { limit: 20, windowMs: 60_000 });
+  const rl = await rateLimit(`process:${ip}`, { limit: 10, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many requests. Please try again later." },
@@ -171,21 +218,26 @@ export async function POST(req: NextRequest) {
 
   try {
     const body: ProcessRequest = await req.json();
-    const { image, backgroundColor, size, enhance } = body;
+    const { image, backgroundColor, enhance } = body;
 
-    if (!image || !backgroundColor || !size) {
+    // Normalize size to an array for batch processing
+    const sizes = Array.isArray(body.size) ? body.size : [body.size];
+
+    if (!image || !backgroundColor || sizes.length === 0) {
       return NextResponse.json(
         { error: "Missing required fields: image, backgroundColor, size" },
         { status: 400 },
       );
     }
 
-    const sizeConfig = SIZES[size];
-    if (!sizeConfig) {
-      return NextResponse.json(
-        { error: `Invalid size. Use: ${Object.keys(SIZES).join(", ")}` },
-        { status: 400 },
-      );
+    // Validate all requested sizes
+    for (const s of sizes) {
+      if (!SIZES[s]) {
+        return NextResponse.json(
+          { error: `Invalid size "${s}". Use: ${Object.keys(SIZES).join(", ")}` },
+          { status: 400 },
+        );
+      }
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -200,7 +252,7 @@ export async function POST(req: NextRequest) {
       ? image
       : `data:image/jpeg;base64,${image}`;
 
-    // Send to Gemini for AI-powered background removal + replacement
+    // Single Gemini call for background removal
     const aiProcessedBuffer = await processWithGemini(
       imageDataUri,
       backgroundColor,
@@ -211,7 +263,6 @@ export async function POST(req: NextRequest) {
     const imgWidth = metadata.width!;
     const imgHeight = metadata.height!;
 
-    // Validate image dimensions
     if (imgWidth < 200 || imgHeight < 200) {
       return NextResponse.json(
         { error: "Image is too small. Please upload a higher resolution photo (at least 500×500 pixels)." },
@@ -219,75 +270,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Find subject bounds in the AI-processed image for precise cropping
-    const boundsBuffer = await sharp(aiProcessedBuffer).ensureAlpha().png().toBuffer();
-    const bounds = await findSubjectBounds(boundsBuffer as Buffer, imgWidth, imgHeight);
+    // Estimate face region from the full AI-processed image
+    const face = estimateFaceRegion(imgWidth, imgHeight);
 
-    // Check if any subject was found
-    const subjectHeight = bounds.bottom - bounds.top;
-    const subjectWidth = bounds.right - bounds.left;
-    if (subjectHeight < 50 || subjectWidth < 50) {
-      return NextResponse.json(
-        { error: "No face detected in the photo. Please upload a clear, front-facing photo." },
-        { status: 400 },
-      );
+    // Crop to all requested sizes in parallel
+    const results = await Promise.all(
+      sizes.map((s) =>
+        cropToSize(aiProcessedBuffer, imgWidth, imgHeight, face, s, backgroundColor, enhance),
+      ),
+    );
+
+    // If single size requested (backward-compatible), return flat response
+    if (results.length === 1) {
+      return NextResponse.json({
+        processedImage: results[0].image,
+        metadata: results[0].metadata,
+      });
     }
 
-    // Estimate face position
-    const face = estimateFaceRegion(bounds);
-
-    // Calculate crop region
-    const targetAspect = sizeConfig.width / sizeConfig.height;
-    const crop = calculateCrop(imgWidth, imgHeight, face, targetAspect);
-
-    // Create the background color
-    const bgColor = hexToRgb(backgroundColor);
-
-    // Build the processing pipeline with Sharp for precise cropping
-    let pipeline = sharp(aiProcessedBuffer);
-
-    // Crop to the calculated region
-    pipeline = pipeline.extract({
-      left: crop.left,
-      top: crop.top,
-      width: crop.width,
-      height: crop.height,
-    });
-
-    // Resize to target dimensions
-    pipeline = pipeline.resize(sizeConfig.width, sizeConfig.height, {
-      fit: "cover",
-      position: "centre",
-    });
-
-    // Apply basic enhancement if requested
-    if (enhance) {
-      pipeline = pipeline
-        .modulate({
-          brightness: 1.05,
-          saturation: 1.05,
-        })
-        .sharpen({ sigma: 0.8 })
-        .gamma(1.1);
+    // Batch response: map of size -> result
+    const batchResults: Record<string, string> = {};
+    const batchMetadata: Record<string, Record<string, string>> = {};
+    for (const r of results) {
+      batchResults[r.size] = r.image;
+      batchMetadata[r.size] = r.metadata;
     }
-
-    // Flatten onto background color (ensures solid background)
-    pipeline = pipeline.flatten({
-      background: bgColor,
-    });
-
-    // Output as high-quality JPEG
-    const outputBuffer = await pipeline.jpeg({ quality: 95 }).toBuffer();
-
-    const outputBase64 = `data:image/jpeg;base64,${outputBuffer.toString("base64")}`;
 
     return NextResponse.json({
-      processedImage: outputBase64,
-      metadata: {
-        size: sizeConfig.label,
-        dimensions: `${sizeConfig.width}×${sizeConfig.height}px`,
-        backgroundColor,
-      },
+      results: batchResults,
+      metadata: batchMetadata,
     });
   } catch (error) {
     console.error("Processing error:", error);
