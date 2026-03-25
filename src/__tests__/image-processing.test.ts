@@ -30,45 +30,38 @@ describe("hexToRgb", () => {
 });
 
 describe("estimateFaceRegion", () => {
-  it("estimates face in the top 35% of subject", () => {
-    const bounds = { top: 100, bottom: 1100, left: 200, right: 600 };
-    const face = estimateFaceRegion(bounds);
+  it("estimates face in the upper portion of the image", () => {
+    const face = estimateFaceRegion(800, 1200);
 
-    expect(face.top).toBe(100);
-    expect(face.bottom).toBe(100 + 1000 * 0.35); // 450
-    expect(face.height).toBe(350);
+    expect(face.top).toBe(1200 * 0.05); // 60
+    expect(face.bottom).toBe(1200 * 0.40); // 480
+    expect(face.height).toBe(face.bottom - face.top);
   });
 
-  it("centers face horizontally on subject", () => {
-    const bounds = { top: 0, bottom: 1000, left: 100, right: 500 };
-    const face = estimateFaceRegion(bounds);
+  it("centers face horizontally on the image", () => {
+    const face = estimateFaceRegion(800, 1200);
 
-    expect(face.centerX).toBe(300); // (100 + 500) / 2
+    expect(face.centerX).toBe(400); // 800 / 2
   });
 
   it("calculates face width as 75% of face height", () => {
-    const bounds = { top: 0, bottom: 1000, left: 0, right: 400 };
-    const face = estimateFaceRegion(bounds);
+    const face = estimateFaceRegion(800, 1200);
 
     expect(face.width).toBe(face.height * 0.75);
   });
 
-  it("clamps face left/right to subject bounds", () => {
-    // Narrow subject — face width might exceed subject bounds
-    const bounds = { top: 0, bottom: 1000, left: 190, right: 210 };
-    const face = estimateFaceRegion(bounds);
+  it("clamps face left/right to image bounds", () => {
+    // Narrow image — face width might exceed image bounds
+    const face = estimateFaceRegion(50, 1000);
 
-    expect(face.left).toBeGreaterThanOrEqual(bounds.left);
-    expect(face.right).toBeLessThanOrEqual(bounds.right);
+    expect(face.left).toBeGreaterThanOrEqual(0);
+    expect(face.right).toBeLessThanOrEqual(50);
   });
 });
 
 describe("calculateCrop", () => {
-  const makeFace = (bounds: { top: number; bottom: number; left: number; right: number }) =>
-    estimateFaceRegion(bounds);
-
   it("returns crop dimensions within image bounds", () => {
-    const face = makeFace({ top: 100, bottom: 900, left: 200, right: 600 });
+    const face = estimateFaceRegion(800, 1200);
     const crop = calculateCrop(800, 1200, face, SIZES["35x45"].width / SIZES["35x45"].height);
 
     expect(crop.left).toBeGreaterThanOrEqual(0);
@@ -78,7 +71,7 @@ describe("calculateCrop", () => {
   });
 
   it("produces a crop with correct aspect ratio (within rounding)", () => {
-    const face = makeFace({ top: 100, bottom: 900, left: 200, right: 600 });
+    const face = estimateFaceRegion(800, 1200);
     const targetAspect = SIZES["35x45"].width / SIZES["35x45"].height;
     const crop = calculateCrop(800, 1200, face, targetAspect);
 
@@ -87,7 +80,7 @@ describe("calculateCrop", () => {
   });
 
   it("clamps crop to image when face is near edge", () => {
-    const face = makeFace({ top: 0, bottom: 500, left: 0, right: 300 });
+    const face = estimateFaceRegion(300, 500);
     const crop = calculateCrop(300, 500, face, SIZES["25x35"].width / SIZES["25x35"].height);
 
     expect(crop.left).toBeGreaterThanOrEqual(0);
@@ -95,8 +88,8 @@ describe("calculateCrop", () => {
   });
 
   it("limits crop height to image height", () => {
-    // Very small image relative to face — crop should not exceed image
-    const face = makeFace({ top: 0, bottom: 100, left: 0, right: 100 });
+    // Very small image — crop should not exceed image
+    const face = estimateFaceRegion(100, 100);
     const crop = calculateCrop(100, 100, face, 1);
 
     expect(crop.height).toBeLessThanOrEqual(100);

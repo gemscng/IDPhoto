@@ -49,7 +49,7 @@ async function resizeIfNeeded(file: File, maxDimension: number): Promise<File> {
           resolve(new File([blob], file.name, { type: file.type || "image/jpeg" }));
         },
         file.type || "image/jpeg",
-        0.92,
+        0.95,
       );
     };
     img.onerror = () => {
@@ -107,8 +107,8 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
     setErrorMessage(null);
 
     try {
-      // Resize large images before sending to server
-      const processFile = await resizeIfNeeded(file, 2048);
+      // Resize large images before sending to server (4096px preserves more detail for studio quality)
+      const processFile = await resizeIfNeeded(file, 4096);
 
       // Convert to base64 for the API
       const reader = new FileReader();
@@ -118,35 +118,25 @@ export function ImagePreview({ file, previewUrl, onReset }: ImagePreviewProps) {
         reader.readAsDataURL(processFile);
       });
 
-      // Process all sizes in parallel — server handles background removal
-      // via Gemini AI and cropping via Sharp
-      const results = await Promise.all(
-        ALL_SIZES.map(async (size) => {
-          const response = await fetch("/api/process", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              image: base64,
-              backgroundColor: selectedBg,
-              size,
-              enhance: true,
-            }),
-          });
-
-          if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || "Processing failed");
-          }
-
-          const data = await response.json();
-          return { size, image: data.processedImage };
+      // Single API call processes all sizes (one Gemini call + local cropping)
+      const response = await fetch("/api/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: base64,
+          backgroundColor: selectedBg,
+          size: [...ALL_SIZES],
+          enhance: true,
         }),
-      );
+      });
 
-      const resultMap: Record<string, string> = {};
-      for (const r of results) {
-        resultMap[r.size] = r.image;
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Processing failed");
       }
+
+      const data = await response.json();
+      const resultMap: Record<string, string> = data.results;
 
       setAllResults(resultMap);
       setResultUrl(resultMap[selectedSize]);
